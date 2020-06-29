@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 from collections import namedtuple
+from ortools.linear_solver import pywraplp
 import math
 
 Point = namedtuple("Point", ['x', 'y'])
@@ -61,6 +62,37 @@ def facilityNaive(facility_count, facilities, customer_count, customers):
 
     solution = [-1]*len(customers)
     capacity_remaining = [f.capacity for f in facilities]
+
+    solver = pywraplp.Solver('SolverIOCA', pywraplp.Solver.CBC_MIXED_INTEGER_PROGRAMMING)
+    solver.SetTimeLimit(1000000)
+
+    # Creating Variable that indicates if a store is open.
+    y = []
+
+    for i in range(0, facility_count):
+        y.append(solver.IntVar(0.0,1.0,'y[%d]' % i))
+
+    x = []
+    # Creating Variable that indicates if a customer is conected to a store
+    for i in range(0,facility_count):
+        aux = []
+        for j in range(0,customer_count):
+            aux.append(solver.IntVar(0.0,1.0,'z[%d]' % (j)))
+        x.append(aux)
+
+    # Each client is conected to one store
+    constraintType1 = []
+    for i in range(0,customer_count):
+        constraintType1.append(solver.Constraint(1,1))
+
+    for i in range(0,facility_count):
+        for j in range(0,customer_count):
+            if x[i][j] == 1:
+                constraintType1[i].SetCoefficient(x[i][j],1)
+
+    # Each client can only be conected to an open store.
+    constraintType2 = []
+
 
     # trivial solution: pack the facilities one by one until all the customers are served
     facility_index = 0
