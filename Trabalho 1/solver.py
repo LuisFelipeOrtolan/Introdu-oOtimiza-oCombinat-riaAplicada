@@ -1,3 +1,8 @@
+# Otimização Aleatória Aplicada
+# Universidade Federal de São Carlos
+# Aluno: Luís Felipe Corrêa Ortolan
+# RA: 759375
+
 from collections import namedtuple
 from operator import attrgetter
 
