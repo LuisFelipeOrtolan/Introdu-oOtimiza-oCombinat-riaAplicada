@@ -4,7 +4,7 @@
 # RA: 759375
 
 from collections import namedtuple
-from ortools.linear_solver import pywraplp
+import gurobipy as gp
 import numpy as np
 import sys
 import math
@@ -14,17 +14,6 @@ Facility = namedtuple("Facility", ['index', 'setup_cost', 'capacity', 'location'
 Customer = namedtuple("Customer", ['index', 'demand', 'location'])
 
 DEBUG = 0
-
-def prepareSolution(x, facility_count, customer_count):
-    solution = []
-    for j in range(customer_count):
-        solution.append(-1)
-    for i in range(facility_count):
-        for j in range(0,customer_count):
-            if x[i,j].SolutionValue() == 1:
-                solution[j] = i
-    return solution
-
 
 def length(point1, point2):
     return math.sqrt((point1.x - point2.x)**2 + (point1.y - point2.y)**2)
@@ -68,46 +57,70 @@ def facilityNaive(facility_count, facilities, customer_count, customers):
         print()
 
     # Modify this code to run your optimization algorithm
-
     solution = [-1]*len(customers)
     capacity_remaining = [f.capacity for f in facilities]
 
-    model = pywraplp.Solver('SolverIOCA', pywraplp.Solver.CBC_MIXED_INTEGER_PROGRAMMING)
-    model.SetTimeLimit(1000000)
+    if facility_count < 500:
+        model = gp.Model("SolverIOCA")
 
-    # Creating Variable that indicates if a store is open.
-    y = {}
+        # Creating Variable that indicates if a store is open.
+        y = {}
 
-    for i in facilities:
-        y[i.index] = model.IntVar(0.0,1.0,'y[%d]' % i.index)
+        for i in facilities:
+            y[i.index] = model.addVar(vtype = "B" , name = "y["+str(i.index)+"]")
 
-    x = {}
-    # Creating Variable that indicates if a customer is conected to a store.
-    for i in facilities:
+        x = {}
+        # Creating Variable that indicates if a customer is conected to a store.
+        for i in facilities:
+            for j in customers:
+                x[i.index,j.index] = model.addVar(vtype = "B", name = "x["+str(i.index)+","+str(j.index)+"]")
+
+        # Each client is conected to one store.
         for j in customers:
-            x[i.index,j.index] = model.IntVar(0.0,1.0,'x[%d][%d]' % (i.index,j.index))
+            model.addConstr(gp.quicksum(x[i.index,j.index] for i in facilities) == 1)
 
-    # Each client is conected to one store.
-    for j in customers:
-        model.Add(model.Sum(x[i.index,j.index] for i in facilities) == 1)
+        # Clients can only be conected to an open store.
+        for i in facilities:
+            for j in customers:
+                model.addConstr(x[i.index,j.index] <= y[i.index])
 
-    # Clients can only be conected to an open store.
-    for i in facilities:
-        for j in customers:
-            model.Add(x[i.index,j.index] <= y[i.index])
+        # The sum of client's demands have to be equal or less to the store's capacity.
+        for i in facilities:
+            model.addConstr(gp.quicksum((j.demand * x[i.index,j.index]) for j in customers) <= i.capacity)
 
-    # The sum of client's demands have to be equal or less to the store's capacity.
-    for i in facilities:
-        model.Add(model.Sum((j.demand * x[i.index,j.index]) for j in customers) <= i.capacity)
+        # Setting the objective
+        obj = (gp.quicksum((i.setup_cost * y[i.index]) for i in facilities)) + (gp.quicksum(gp.quicksum((length(i.location, j.location) * x[i.index,j.index]) for i in facilities) for j in customers))
+        model.setObjective(obj, gp.GRB.MINIMIZE)
+        model.optimize()
 
-    # Setting the objective
-    obj = (model.Sum((i.setup_cost * y[i.index]) for i in facilities)) + (model.Sum(model.Sum((length(i.location, j.location) * x[i.index,j.index]) for i in facilities) for j in customers))
-    model.Minimize(obj)
-    model.Solve()
-    
-    value = model.Objective().Value()
+        value = model.objVal
+        
+        for i in facilities:
+            for j in customers:
+                if(model.getVarByName("x["+str(i.index)+","+str(j.index)+"]").x == 1):
+                    solution[j.index] = i.index
 
-    solution = prepareSolution(x, facility_count, customer_count)
+    else:
+        # trivial solution: pack the facilities one by one until all the customers are served
+        facility_index = 0
+        for customer in customers:
+            if capacity_remaining[facility_index] >= customer.demand:
+                solution[customer.index] = facility_index
+                capacity_remaining[facility_index] -= customer.demand
+            else:
+                facility_index += 1
+                assert capacity_remaining[facility_index] >= customer.demand
+                solution[customer.index] = facility_index
+                capacity_remaining[facility_index] -= customer.demand
+
+        used = [0]*len(facilities)
+        for facility_index in solution:
+            used[facility_index] = 1
+
+        # calculate the cost of the solution
+        value = sum([f.setup_cost*used[f.index] for f in facilities])
+        for customer in customers:
+            value += length(customer.location, facilities[solution[customer.index]].location)
 
     # prepare the solution in the specified output format
     output_data = '%.2f' % value + '\n'
